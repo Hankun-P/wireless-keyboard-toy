@@ -2,6 +2,11 @@
 __pycache__/
 *.py[codz]
 *$py.class
+*.pyc
+*.pyo
+*.pyd
+.venv/
+env/
 
 # C extensions
 *.so
@@ -205,3 +210,18 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Qt / PySide
+*.qmlc
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Arduino
+*.hex
+*.elf
+
+# KiCad
+*.kicad_prl
+*.kicad_pro-bak
