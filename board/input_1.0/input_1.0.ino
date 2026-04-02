@@ -1,34 +1,35 @@
 #include <SPI.h>
 #include <nRF24L01.h>
 #include <RF24.h>
-#include <Keyboard.h>
 
-RF24 radio(9, 10); // CE, CSN
+RF24 radio(9, 10);
 const byte address[6] = "00001";
 
-char text[32] = "";
+struct Packet {
+  uint8_t keycode;
+  uint8_t state;
+  uint16_t seq;
+};
+
+Packet p;
 
 void setup() {
-  Serial.begin(9600);
-  Keyboard.begin();
+  Serial.begin(115200);
 
   radio.begin();
   radio.openReadingPipe(0, address);
-  radio.setPALevel(RF24_PA_LOW);
   radio.startListening();
 }
 
 void loop() {
   if (radio.available()) {
-    radio.read(&text, sizeof(text));
-    Serial.print("Received: ");
-    Serial.println(text);
+    radio.read(&p, sizeof(p));
 
-    if (strcmp(text, "DOWN") == 0) {
-      Keyboard.press('a');   // 👉 可以改成任意键
-    }
-    else if (strcmp(text, "UP") == 0) {
-      Keyboard.release('a');
-    }
+    // 👉 只转发，不解释
+    Serial.print(p.keycode);
+    Serial.print(",");
+    Serial.print(p.state);
+    Serial.print(",");
+    Serial.println(p.seq);
   }
 }

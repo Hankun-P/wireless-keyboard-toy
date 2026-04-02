@@ -4,14 +4,20 @@
 
 #define BUTTON_PIN 2
 
-RF24 radio(9, 10); // CE, CSN
+RF24 radio(9, 10);
 const byte address[6] = "00001";
 
 bool lastState = HIGH;
+unsigned long seq = 0;
+
+struct Packet {
+  uint8_t keycode;
+  uint8_t state;
+  uint16_t seq;
+};
 
 void setup() {
   pinMode(BUTTON_PIN, INPUT_PULLUP);
-  Serial.begin(9600);
 
   radio.begin();
   radio.openWritingPipe(address);
@@ -22,18 +28,15 @@ void setup() {
 void loop() {
   bool currentState = digitalRead(BUTTON_PIN);
 
-  // 状态变化才发送（防抖 + 减少通信量）
   if (currentState != lastState) {
-    if (currentState == LOW) {
-      const char text[] = "DOWN";
-      radio.write(&text, sizeof(text));
-      Serial.println("Send: DOWN");
-    } else {
-      const char text[] = "UP";
-      radio.write(&text, sizeof(text));
-      Serial.println("Send: UP");
-    }
-    delay(20); // 简单防抖
+    Packet p;
+    p.keycode = 0; // 这个键编号
+    p.state = (currentState == LOW) ? 1 : 0;
+    p.seq = seq++;
+
+    radio.write(&p, sizeof(p));
+
+    delay(10);
   }
 
   lastState = currentState;
