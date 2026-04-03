@@ -10,9 +10,10 @@ const byte address[6] = "00001";
 bool lastState = HIGH;
 unsigned long seq = 0;
 
+// 数据包结构
 struct Packet {
-  uint8_t keycode;
-  uint8_t state;
+  uint8_t keycode;   // 物理按键编号 (固定为0)
+  uint8_t state;     // 0=释放, 1=按下
   uint16_t seq;
 };
 
@@ -30,13 +31,13 @@ void loop() {
 
   if (currentState != lastState) {
     Packet p;
-    p.keycode = 0; // 这个键编号
-    p.state = (currentState == LOW) ? 1 : 0;
+    p.keycode = 0;      // 物理按键编号固定为0
+    p.state = (currentState == LOW) ? 1 : 0;  // LOW=按下(1), HIGH=释放(0)
     p.seq = seq++;
 
     radio.write(&p, sizeof(p));
 
-    delay(10);
+    delay(10);  // 简单消抖
   }
 
   lastState = currentState;

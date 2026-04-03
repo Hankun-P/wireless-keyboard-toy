@@ -1,9 +1,9 @@
 import sys
-from PySide6.QtWidgets import QWidget, QLabel, QPushButton
+from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QComboBox, QMessageBox
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QPixmap, QKeySequence
 
-from core.device import FakeDevice
+from core.device import ArduinoDevice
 from core.state import UIState
 from ui.progress_bar import CustomProgressBar
 from utils.path import resource_path
@@ -15,33 +15,49 @@ class App(QWidget):
 
         # ===== 基础 =====
         self.setWindowTitle("ToyKey Controller")
-        self.setFixedSize(320, 220)
+        self.setFixedSize(320, 260)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
-        self.device = FakeDevice()
+        # 创建设备实例 (未连接状态)
+        self.device = ArduinoDevice()
         self.state = UIState.IDLE
 
         # ===== UI =====
-        self.status = QLabel("状态：已连接", self)
+        self.status = QLabel("状态：未连接", self)
         self.status.move(10, 10)
 
+        # 串口选择下拉框
+        self.port_label = QLabel("串口:", self)
+        self.port_label.move(10, 35)
+        
+        self.port_combo = QComboBox(self)
+        self.port_combo.setFixedWidth(120)
+        self.port_combo.move(50, 33)
+        self.refresh_ports()
+        
+        # 连接按钮
+        self.connect_btn = QPushButton("连接", self)
+        self.connect_btn.move(180, 33)
+        self.connect_btn.clicked.connect(self.toggle_connection)
+
         self.battery = QLabel(self)
-        self.battery.move(10, 35)
+        self.battery.move(10, 65)
 
         self.key = QLabel(self)
-        self.key.move(10, 60)
+        self.key.move(10, 90)
 
         self.btn = QPushButton("修改按键", self)
-        self.btn.move(100, 90)
+        self.btn.move(100, 120)
         self.btn.clicked.connect(self.enter_binding)
+        self.btn.setEnabled(False)  # 未连接时禁用
 
         self.hint = QLabel("长按键盘按键进行绑定", self)
-        self.hint.move(60, 130)
+        self.hint.move(60, 160)
         self.hint.hide()
 
         self.progress = CustomProgressBar()
         self.progress.setParent(self)
-        self.progress.move(70, 160)
+        self.progress.move(70, 190)
         self.progress.hide()
 
         self.sprite = QLabel(self)
@@ -73,12 +89,52 @@ class App(QWidget):
 
         self.refresh()
 
+    # ================= 串口连接 =================
+    def refresh_ports(self):
+        """刷新可用串口列表"""
+        self.port_combo.clear()
+        ports = ArduinoDevice.list_ports()
+        if ports:
+            self.port_combo.addItems(ports)
+        else:
+            self.port_combo.addItem("无可用串口")
+    
+    def toggle_connection(self):
+        """连接/断开设备"""
+        if self.device.serial and self.device.serial.is_open:
+            # 断开连接
+            self.device.disconnect()
+            self.status.setText("状态：未连接")
+            self.connect_btn.setText("连接")
+            self.port_combo.setEnabled(True)
+            self.btn.setEnabled(False)
+            self.battery.setText("")
+            self.key.setText("")
+        else:
+            # 连接设备
+            port = self.port_combo.currentText()
+            if port == "无可用串口":
+                QMessageBox.warning(self, "警告", "没有可用的串口")
+                return
+            
+            if self.device.connect(port):
+                self.status.setText("状态：已连接")
+                self.connect_btn.setText("断开")
+                self.port_combo.setEnabled(False)
+                self.btn.setEnabled(True)
+                self.refresh()
+            else:
+                QMessageBox.critical(self, "错误", f"无法连接到 {port}")
+
     # ================= 状态控制 =================
     def enter_binding(self):
         self.state = UIState.BINDING
 
         self.key.hide()
         self.btn.hide()
+        self.port_label.hide()
+        self.port_combo.hide()
+        self.connect_btn.hide()
 
         self.hint.show()
         self.progress.show()
@@ -106,6 +162,9 @@ class App(QWidget):
 
         self.key.show()
         self.btn.show()
+        self.port_label.show()
+        self.port_combo.show()
+        self.connect_btn.show()
 
         self.progress.setValue(0)
 

@@ -4,8 +4,14 @@
 #include <EEPROM.h>
 #include <Keyboard.h>
 
+// ========== 测试模式配置 ==========
+#define TEST_MODE_DIRECT  // 定义此宏启用直连测试模式，注释掉则使用无线模式
+#define TEST_BUTTON_PIN 4 // 测试按键引脚 (根据你的接线修改)
+
+#ifndef TEST_MODE_DIRECT
 RF24 radio(9, 10);
 const byte address[6] = "00001";
+#endif
 
 // 数据包结构
 struct Packet {
@@ -15,6 +21,12 @@ struct Packet {
 };
 
 Packet p;
+
+// 测试模式变量
+#ifdef TEST_MODE_DIRECT
+bool lastButtonState = HIGH;
+unsigned long testSeq = 0;
+#endif
 
 // EEPROM 地址定义
 const int EEPROM_ADDR_KEYMAP = 0;  // 按键映射表起始地址
@@ -112,21 +124,49 @@ void setup() {
   // 加载按键映射
   loadKeymap();
   
-  // 初始化 nRF24
+  #ifdef TEST_MODE_DIRECT
+  // 测试模式: 配置直连按键
+  pinMode(TEST_BUTTON_PIN, INPUT_PULLUP);
+  Serial.println("[TEST MODE] 直连测试模式已启用");
+  Serial.print("[TEST MODE] 按键引脚: ");
+  Serial.println(TEST_BUTTON_PIN);
+  #else
+  // 无线模式: 初始化 nRF24
   radio.begin();
   radio.openReadingPipe(0, address);
   radio.startListening();
+  Serial.println("[RF MODE] 无线模式已启用");
+  #endif
 }
 
 void loop() {
   // 处理串口指令 (改键)
   processSerialCommand();
   
-  // 处理无线按键事件
+  #ifdef TEST_MODE_DIRECT
+  // 测试模式: 直接读取按键
+  bool currentState = digitalRead(TEST_BUTTON_PIN);
+  
+  if (currentState != lastButtonState) {
+    p.keycode = 0;  // 物理按键编号
+    p.state = (currentState == LOW) ? 1 : 0;  // LOW=按下, HIGH=释放
+    p.seq = testSeq++;
+    
+    // 发送 HID 按键事件
+    sendHIDKey(p.keycode, p.state);
+    
+    delay(10);  // 简单消抖
+  }
+  
+  lastButtonState = currentState;
+  
+  #else
+  // 无线模式: 处理无线按键事件
   if (radio.available()) {
     radio.read(&p, sizeof(p));
     
     // 发送 HID 按键事件给 PC
     sendHIDKey(p.keycode, p.state);
   }
+  #endif
 }
