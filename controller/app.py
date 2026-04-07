@@ -1,7 +1,7 @@
 import sys
 import os
 from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QComboBox, QMessageBox
-from PySide6.QtCore import QTimer, Qt, QPoint
+from PySide6.QtCore import QTimer, Qt, QPoint, QDateTime
 from PySide6.QtGui import QPixmap, QKeySequence, QPainter, QFontDatabase, QFont
 
 from core.device import ArduinoDevice
@@ -77,16 +77,16 @@ class App(QWidget):
 
         # ===== UI - 分布式布局 =====
         # 所有元素根据窗口尺寸动态定位
-        margin = 30  # 边距
+        margin = 80  # 边距 - 增大以靠近中央
         
         # 左上角：电量显示
-        self.battery_icon = QLabel(self)
-        self.battery_icon.setFixedSize(48, 24)
-        self.battery_icon.move(margin, margin)
-        
         self.battery_label = QLabel("当前以太量", self)
-        self.battery_label.move(margin, margin + 30)
+        self.battery_label.move(margin, margin)
         self.apply_font(self.battery_label, 10)
+        
+        self.battery_icon = QLabel(self)
+        self.battery_icon.setFixedSize(80, 240)  # 实际图片尺寸
+        self.battery_icon.move(margin, margin + 28)  # 图标在文字正下方
         
         # 右上角：关闭按钮
         self.close_btn = ImageButton(
@@ -102,7 +102,7 @@ class App(QWidget):
         self._load_battery_images()
         
         # 左下角：当前绑定按键
-        self.key_label = QLabel("当前绑定", self)
+        self.key_label = QLabel(self)
         self.key_label.move(margin, self.height() - margin - 50)
         self.apply_font(self.key_label, 10)
         
@@ -110,10 +110,14 @@ class App(QWidget):
         self.key.move(margin, self.height() - margin - 30)
         self.apply_font(self.key, 16, bold=True)
         
-        # 右下角：连接状态
+        # 右下角：连接状态（图标在文字左侧）
+        self.status_text = QLabel("未连接", self)
+        self.status_text.move(self.width() - margin - 50, self.height() - margin - 25)
+        self.apply_font(self.status_text, 11)
+        
         self.status_icon = QLabel(self)
-        self.status_icon.setFixedSize(24, 24)
-        self.status_icon.move(self.width() - margin - 24, self.height() - margin - 30)
+        self.status_icon.setFixedSize(80, 80)  # 实际图片尺寸
+        self.status_icon.move(self.width() - margin - 100, self.height() - margin - 35)  # 图标在文字左侧
         
         # 动态文字标签（每个字单独一个 QLabel，用于实现跳跃效果）
         self.praying_labels = []
@@ -129,6 +133,7 @@ class App(QWidget):
         
         # 省略号标签
         self.dots_label = QLabel(".", self)
+        self.dots_label.setFixedSize(30, 20)  # 固定大小，确保能显示3个点
         self.dots_label.move(self.praying_base_x + len(self.praying_text) * 16, self.praying_base_y)
         self.apply_font(self.dots_label, 11)
         
@@ -140,11 +145,17 @@ class App(QWidget):
         self.status_anim_timer.timeout.connect(self._update_connecting_anim)
         self.status_anim_frame = 0
         
-        # 文字跳跃动画定时器
+        # 文字跳跃动画定时器 (180ms × 5字 + 300ms停留 = 1200ms 一轮)
         self.pray_anim_timer = QTimer(self)
         self.pray_anim_timer.timeout.connect(self._update_praying_anim)
         self.pray_char_index = 0  # 当前跳跃的字索引
         self.pray_dots_count = 1  # 当前省略号数量
+        self.pray_cycle_count = 0  # 已完成轮数（用于虚假显示）
+        self.min_pray_time_ms = 2000  # 最少显示时间（毫秒）- 约1轮
+        self.pray_start_time = 0  # 动画开始时间
+        self.pending_connected = False  # 待切换到已连接状态
+        self.pray_anim_interval = 360  # 正常帧间隔(ms) - 翻倍
+        self.pray_last_frame_interval = 600  # 最后一帧停留时间(ms) - 翻倍
         
         # 自动连接定时器
         self.auto_connect_timer = QTimer(self)
@@ -159,8 +170,10 @@ class App(QWidget):
             self.BTN_BIND_NORMAL,
             self.BTN_BIND_HOVER,
             self.BTN_BIND_PRESSED,
-            self
+            self,
+            "修改按键"  # 按钮文字
         )
+        self.apply_font(self.btn, 14, bold=True)  # 应用字体
         # 按钮居中显示
         btn_x = (self.width() - self.btn.width()) // 2
         btn_y = (self.height() - self.btn.height()) // 2
@@ -179,8 +192,10 @@ class App(QWidget):
             self.BTN_BIND_NORMAL,
             self.BTN_BIND_HOVER,
             self.BTN_BIND_PRESSED,
-            self
+            self,
+            "取消"  # 按钮文字
         )
+        self.apply_font(self.cancel_btn, 14, bold=True)  # 应用字体
         self.cancel_btn.move(self.width()//2 - 50, self.height()//2 + 80)
         self.cancel_btn.clicked.connect(self.cancel_binding)
         self.cancel_btn.hide()
@@ -275,13 +290,22 @@ class App(QWidget):
     
     def _set_status_connecting(self):
         """设置状态为连接中 - 启动仙女祈祷动画"""
-        # 显示祈祷文字
+        # 隐藏状态文字，显示祈祷文字
+        self.status_text.hide()
         for label in self.praying_labels:
             label.show()
         self.dots_label.show()
         
-        # 启动动画定时器
-        self.pray_anim_timer.start(200)  # 每200ms更新一次动画
+        # 重置动画状态
+        self.pray_char_index = 0
+        self.pray_dots_count = 1
+        self.pray_cycle_count = 0
+        self.pray_start_time = QDateTime.currentDateTime().toMSecsSinceEpoch()
+        self.pending_connected = False
+        self.dots_label.setText(".")
+        
+        # 启动动画定时器（使用正常间隔）
+        self.pray_anim_timer.start(self.pray_anim_interval)
         
         if self.connecting_frames:
             self.status_icon.setPixmap(self.connecting_frames[0])
@@ -291,6 +315,16 @@ class App(QWidget):
     
     def _update_praying_anim(self):
         """更新祈祷文字动画"""
+        # 判断是否是最后一帧（索引4）
+        is_last_frame = (self.pray_char_index == 4)
+        
+        # 如果是最后一帧且有待连接状态，检查时间并准备切换
+        if is_last_frame and self.pending_connected:
+            elapsed = QDateTime.currentDateTime().toMSecsSinceEpoch() - self.pray_start_time
+            if elapsed >= self.min_pray_time_ms:
+                # 最后一帧显示完后切换，使用单次定时器
+                QTimer.singleShot(self.pray_last_frame_interval, self._do_set_status_connected)
+        
         # 重置所有字的位置
         for i, label in enumerate(self.praying_labels):
             label.move(self.praying_base_x + i * 16, self.praying_base_y)
@@ -300,16 +334,34 @@ class App(QWidget):
             current_label = self.praying_labels[self.pray_char_index]
             current_label.move(current_label.x(), self.praying_base_y - 5)
         
-        # 更新省略号
+        # 更新省略号（5字一轮，...也应该是5步一轮，但...只有3种状态，所以每2个字更新一次）
+        # 字索引: 0,1,2,3,4 -> 点数量: 1,1,2,3,3（平均分布）
+        dots_map = {0: 1, 1: 1, 2: 2, 3: 3, 4: 3}
+        self.pray_dots_count = dots_map.get(self.pray_char_index, 1)
         dots = "." * self.pray_dots_count
         self.dots_label.setText(dots)
         
         # 更新索引
         self.pray_char_index = (self.pray_char_index + 1) % len(self.praying_labels)
-        self.pray_dots_count = (self.pray_dots_count % 3) + 1  # 1->2->3->1
+        
+        # 调整定时器间隔：最后一帧停留更久
+        if is_last_frame:
+            self.pray_anim_timer.setInterval(self.pray_last_frame_interval)
+        else:
+            self.pray_anim_timer.setInterval(self.pray_anim_interval)
     
     def _set_status_connected(self):
-        """设置状态为已连接"""
+        """设置状态为已连接（带虚假显示延迟）"""
+        # 如果祈祷动画未满2轮，延迟切换
+        if self.pray_cycle_count < self.min_pray_cycles:
+            self.pending_connected = True
+            return
+        
+        self._do_set_status_connected()
+    
+    def _do_set_status_connected(self):
+        """实际执行切换到已连接状态"""
+        self.pending_connected = False
         self.status_anim_timer.stop()
         self.pray_anim_timer.stop()
         
@@ -317,6 +369,9 @@ class App(QWidget):
         for label in self.praying_labels:
             label.hide()
         self.dots_label.hide()
+        
+        self.status_text.setText("已连接")
+        self.status_text.show()
         
         if not self.connected_pixmap.isNull():
             self.status_icon.setPixmap(self.connected_pixmap)
@@ -332,6 +387,9 @@ class App(QWidget):
         for label in self.praying_labels:
             label.hide()
         self.dots_label.hide()
+        
+        self.status_text.setText("未连接")
+        self.status_text.show()
         
         if not self.disconnected_pixmap.isNull():
             self.status_icon.setPixmap(self.disconnected_pixmap)
@@ -358,8 +416,8 @@ class App(QWidget):
         font = QFont(self.font_family, size)
         font.setBold(bold)
         widget.setFont(font)
-        # 设置文字颜色（根据背景图调整）
-        widget.setStyleSheet("color: white; background: transparent;")
+        # 设置文字颜色为黑色
+        widget.setStyleSheet("color: black; background: transparent;")
 
     # ================= 串口自动连接 =================
     def try_auto_connect(self):
@@ -397,7 +455,12 @@ class App(QWidget):
     
     def on_connected(self, port):
         """连接成功回调"""
-        self._set_status_connected()
+        # 先显示祈祷动画（如果当前不是连接中状态）
+        if not self.pray_anim_timer.isActive():
+            self._set_status_connecting()
+        
+        # 延迟执行实际连接后的操作
+        self.pending_connected = True
         self.btn.setEnabled(True)
         self.refresh()
         print(f"[AUTO] 已自动连接到 {port}")
@@ -413,7 +476,7 @@ class App(QWidget):
     def enter_binding(self):
         self.state = UIState.BINDING
 
-        # 隐藏四个角落的元素
+        # 隐藏四个角落的元素和中央按钮
         self.close_btn.hide()
         self.battery_label.hide()
         self.battery_icon.hide()
@@ -421,6 +484,7 @@ class App(QWidget):
         self.key.hide()
         self.status_icon.hide()
         self.status_text.hide()
+        self.btn.hide()  # 隐藏修改键位按钮
 
         self.hint.show()
         self.progress.show()
@@ -449,13 +513,15 @@ class App(QWidget):
         self.sprite.hide()
         self.cancel_btn.hide()
 
-        # 恢复四个角落的元素
+        # 恢复四个角落的元素和中央按钮
         self.close_btn.show()
         self.battery_label.show()
         self.battery_icon.show()
         self.key_label.show()
         self.key.show()
         self.status_icon.show()
+        self.status_text.show()
+        self.btn.show()  # 恢复修改键位按钮
         # 根据当前状态显示对应的文字
         if self.device.serial and self.device.serial.is_open:
             # 已连接状态，祈祷文字保持隐藏

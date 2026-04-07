@@ -1,14 +1,14 @@
 from PySide6.QtWidgets import QPushButton
-from PySide6.QtGui import QPixmap, QPainter
+from PySide6.QtGui import QPixmap, QPainter, QFont, QColor
 from PySide6.QtCore import Qt
 
 from utils.path import resource_path
 
 
 class ImageButton(QPushButton):
-    """图像按钮组件，支持三种状态：正常、悬停、按下"""
+    """图像按钮组件，支持三种状态：正常、悬停、按下，支持文字叠加"""
     
-    def __init__(self, normal_img, hover_img=None, pressed_img=None, parent=None):
+    def __init__(self, normal_img, hover_img=None, pressed_img=None, parent=None, text=""):
         super().__init__(parent)
         
         # 加载图片
@@ -27,6 +27,11 @@ class ImageButton(QPushButton):
         # 状态标记
         self._is_pressed = False
         self._is_hovered = False
+        
+        # 文字设置
+        self._text = text
+        self._text_color = QColor("black")
+        self._font = QFont("Microsoft YaHei", 12, QFont.Bold)
         
     def enterEvent(self, event):
         """鼠标进入"""
@@ -54,6 +59,22 @@ class ImageButton(QPushButton):
             self.update()
         super().mouseReleaseEvent(event)
         
+    def setText(self, text):
+        """设置按钮文字"""
+        self._text = text
+        self.update()
+    
+    def setTextColor(self, color):
+        """设置文字颜色"""
+        self._text_color = QColor(color)
+        self.update()
+    
+    def setFont(self, font):
+        """设置字体"""
+        super().setFont(font)  # 调用父类方法
+        self._font = font
+        self.update()
+    
     def paintEvent(self, event):
         """绘制按钮"""
         painter = QPainter(self)
@@ -70,5 +91,11 @@ class ImageButton(QPushButton):
         # 绘制图片
         if not pixmap.isNull():
             painter.drawPixmap(self.rect(), pixmap)
+        
+        # 绘制文字
+        if self._text:
+            painter.setFont(self._font)
+            painter.setPen(self._text_color)
+            painter.drawText(self.rect(), Qt.AlignCenter, self._text)
         
         painter.end()
