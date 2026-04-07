@@ -32,6 +32,7 @@ unsigned long testSeq = 0;
 const int EEPROM_ADDR_KEYMAP = 0;  // 按键映射表起始地址
 
 // 默认映射: 物理按键0 -> F13 (0x68)
+// HID 键码参考: https://www.usb.org/sites/default/files/documents/hut1_12v2.pdf
 const uint8_t DEFAULT_KEYMAP[] = {0x68};
 
 // 当前按键映射表 (物理按键 -> HID 键码)
@@ -96,46 +97,81 @@ void processSerialCommand() {
   }
 }
 
+// HID 键码到 ASCII 的映射表（用于 Keyboard.write）
+uint8_t hidToAscii(uint8_t hidKey) {
+  // 字母键 A-Z (0x04-0x1D)
+  if (hidKey >= 0x04 && hidKey <= 0x1D) {
+    return 'a' + (hidKey - 0x04);  // A=0x04, B=0x05, ...
+  }
+  // 数字键 1-9 (0x1E-0x26)
+  if (hidKey >= 0x1E && hidKey <= 0x26) {
+    return '1' + (hidKey - 0x1E);  // 1=0x1E, 2=0x1F, ...
+  }
+  // 数字键 0 (0x27)
+  if (hidKey == 0x27) return '0';
+  // 空格 (0x2C)
+  if (hidKey == 0x2C) return ' ';
+  // 回车 (0x28)
+  if (hidKey == 0x28) return '\n';
+  // Tab (0x2B)
+  if (hidKey == 0x2B) return '\t';
+  // 其他键直接返回原值
+  return hidKey;
+}
+
 // 发送 HID 按键事件
 void sendHIDKey(uint8_t physKey, uint8_t state) {
   uint8_t hidKey = keymap[physKey];
   
   if (state == 1) {
-    Keyboard.press(hidKey);
-  } else {
-    Keyboard.release(hidKey);
+    // 使用 Keyboard.write 发送 ASCII 字符（绕过输入法）
+    uint8_t ascii = hidToAscii(hidKey);
+    if (ascii >= 32 && ascii <= 126) {
+      // 可打印字符
+      Keyboard.write(ascii);
+    } else {
+      // 控制字符或功能键，使用原来的方式
+      Keyboard.press(hidKey);
+      Keyboard.release(hidKey);
+    }
+    // 调试输出已禁用，避免干扰 controller
+    // Serial.print("SEND:");
+    // Serial.print(hidKey, HEX);
+    // Serial.print("->");
+    // Serial.println((char)ascii);
   }
-  
-  // 同时通过串口输出调试信息
-  Serial.print("HID:");
-  Serial.print(physKey);
-  Serial.print(",");
-  Serial.print(state);
-  Serial.print(",0x");
-  Serial.println(hidKey, HEX);
 }
 
 void setup() {
   Serial.begin(115200);
-  
+  // while (!Serial);  // 禁用等待串口，让 Arduino 独立运行
+  // Serial.println("BOOT OK");  // 禁用启动输出，避免干扰 controller
+ 
+  // 初始化 HID 键盘（延后一点）
+  delay(500);
+
   // 初始化 HID 键盘
   Keyboard.begin();
   
   // 加载按键映射
   loadKeymap();
   
+  // 启动调试输出已禁用，避免干扰 controller
+  // Serial.print("[KEYMAP] 当前映射: 0x");
+  // Serial.println(keymap[0], HEX);
+  
   #ifdef TEST_MODE_DIRECT
   // 测试模式: 配置直连按键
   pinMode(TEST_BUTTON_PIN, INPUT_PULLUP);
-  Serial.println("[TEST MODE] 直连测试模式已启用");
-  Serial.print("[TEST MODE] 按键引脚: ");
-  Serial.println(TEST_BUTTON_PIN);
+  // Serial.println("[TEST MODE] 直连测试模式已启用");
+  // Serial.print("[TEST MODE] 按键引脚: ");
+  // Serial.println(TEST_BUTTON_PIN);
   #else
   // 无线模式: 初始化 nRF24
   radio.begin();
   radio.openReadingPipe(0, address);
   radio.startListening();
-  Serial.println("[RF MODE] 无线模式已启用");
+  // Serial.println("[RF MODE] 无线模式已启用");
   #endif
 }
 

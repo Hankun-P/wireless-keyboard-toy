@@ -176,6 +176,7 @@ class App(QWidget):
             return
 
         self.current_pressed_key = event.key()
+        print(f"[DEBUG] keyPressEvent: key={event.key()}, hex={hex(event.key())}")
 
         self.progress_value = 0
         self.progress_timer.start(30)
@@ -248,8 +249,7 @@ class App(QWidget):
     # ================= 完成绑定 =================
     def finish_binding(self):
         if self.current_pressed_key:
-            key_name = QKeySequence(self.current_pressed_key).toString()
-            self.device.set_key(key_name)
+            self.device.set_key(self.current_pressed_key)
 
         self.refresh()
         self.exit_binding()

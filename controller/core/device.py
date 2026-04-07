@@ -29,52 +29,53 @@ QT_TO_HID = {
     16777286: 0x72,  # F23
     16777287: 0x73,  # F24
     
-    # 数字键
-    48: 0x27,  # 0
-    49: 0x1E,  # 1
-    50: 0x1F,  # 2
-    51: 0x20,  # 3
-    52: 0x21,  # 4
-    53: 0x22,  # 5
-    54: 0x23,  # 6
-    55: 0x24,  # 7
-    56: 0x25,  # 8
-    57: 0x26,  # 9
+    # 数字键 (Qt.Key_0 = 0x30, Qt.Key_1 = 0x31, ...)
+    0x30: 0x27,  # 0
+    0x31: 0x1E,  # 1
+    0x32: 0x1F,  # 2
+    0x33: 0x20,  # 3
+    0x34: 0x21,  # 4
+    0x35: 0x22,  # 5
+    0x36: 0x23,  # 6
+    0x37: 0x24,  # 7
+    0x38: 0x25,  # 8
+    0x39: 0x26,  # 9
     
-    # 字母键
-    65: 0x04,  # A
-    66: 0x05,  # B
-    67: 0x06,  # C
-    68: 0x07,  # D
-    69: 0x08,  # E
-    70: 0x09,  # F
-    71: 0x0A,  # G
-    72: 0x0B,  # H
-    73: 0x0C,  # I
-    74: 0x0D,  # J
-    75: 0x0E,  # K
-    76: 0x0F,  # L
-    77: 0x10,  # M
-    78: 0x11,  # N
-    79: 0x12,  # O
-    80: 0x13,  # P
-    81: 0x14,  # Q
-    82: 0x15,  # R
-    83: 0x16,  # S
-    84: 0x17,  # T
-    85: 0x18,  # U
-    86: 0x19,  # V
-    87: 0x1A,  # W
-    88: 0x1B,  # X
-    89: 0x1C,  # Y
-    90: 0x1D,  # Z
+    # 字母键 (Qt.Key_A = 0x41, Qt.Key_B = 0x42, ...)
+    0x41: 0x04,  # A
+    0x42: 0x05,  # B
+    0x43: 0x06,  # C
+    0x44: 0x07,  # D
+    0x45: 0x08,  # E
+    0x46: 0x09,  # F
+    0x47: 0x0A,  # G
+    0x48: 0x0B,  # H
+    0x49: 0x0C,  # I
+    0x4A: 0x0D,  # J
+    0x4B: 0x0E,  # K
+    0x4C: 0x0F,  # L
+    0x4D: 0x10,  # M
+    0x4E: 0x11,  # N
+    0x4F: 0x12,  # O
+    0x50: 0x13,  # P
+    0x51: 0x14,  # Q
+    0x52: 0x15,  # R
+    0x53: 0x16,  # S
+    0x54: 0x17,  # T
+    0x55: 0x18,  # U
+    0x56: 0x19,  # V
+    0x57: 0x1A,  # W
+    0x58: 0x1B,  # X
+    0x59: 0x1C,  # Y
+    0x5A: 0x1D,  # Z
     
-    # 特殊键
-    32: 0x2C,   # Space
-    16777219: 0x2A,  # Backspace
-    16777220: 0x28,  # Enter/Return
-    16777217: 0x2B,  # Tab
-    16777216: 0x29,  # Escape
+    # 特殊键 (使用标准 USB HID 键码)
+    32: 0x2C,   # Space (Qt.Key_Space)
+    16777219: 0x2A,  # Backspace (Qt.Key_Backspace)
+    16777220: 0x28,  # Return (Qt.Key_Return)
+    16777221: 0x58,  # Enter (Qt.Key_Enter - 小键盘)
+    16777217: 0x2B,  # Tab (Qt.Key_Tab)
+    16777216: 0x29,  # Escape (Qt.Key_Escape)
     
     # 方向键
     16777235: 0x52,  # Up
@@ -82,11 +83,12 @@ QT_TO_HID = {
     16777234: 0x50,  # Left
     16777236: 0x4F,  # Right
     
-    # 修饰键
-    16777248: 0xE1,  # Shift (Left)
-    16777249: 0xE0,  # Ctrl (Left)
-    16777250: 0xE2,  # Alt (Left)
-    16777251: 0xE3,  # Meta/Win (Left)
+    # 修饰键 - 暂时禁用，需要特殊处理
+    # Arduino Keyboard库对Ctrl/Shift/Alt需要调用press()配合修饰键API
+    # 16777248: 0xE1,  # Shift (Left) - 暂不支持
+    # 16777249: 0xE0,  # Ctrl (Left) - 暂不支持
+    # 16777250: 0xE2,  # Alt (Left) - 暂不支持
+    # 16777251: 0xE3,  # Meta/Win (Left) - 暂不支持
 }
 
 
@@ -164,13 +166,16 @@ class ArduinoDevice:
     
     def set_key(self, qt_key):
         """设置按键映射 (传入 Qt Key)"""
+        print(f"[DEBUG] Qt Key: {qt_key}")
         hid_code = qt_key_to_hid(qt_key)
+        print(f"[DEBUG] HID code: {hid_code}")
         if hid_code is None:
             print(f"不支持的按键: {qt_key}")
             return False
         
         # 发送 SET 命令: SET:0,0x68
         cmd = f"SET:0,0x{hid_code:02X}"
+        print(f"[DEBUG] 发送命令: {cmd}")
         response = self._send_command(cmd)
         
         if response and response.startswith("OK:"):
