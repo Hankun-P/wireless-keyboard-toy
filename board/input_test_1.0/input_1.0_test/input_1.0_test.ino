@@ -8,6 +8,11 @@
 #define TEST_MODE_DIRECT  // 定义此宏启用直连测试模式，注释掉则使用无线模式
 #define TEST_BUTTON_PIN 4 // 测试按键引脚 (根据你的接线修改)
 
+// LED 错误指示配置
+#define LED_PIN 13        // LED 引脚（大多数 Arduino 板载 LED 在 13 脚）
+#define LED_BLINK_FAST 100   // 快速闪烁间隔（ms）- nRF24 初始化失败
+#define LED_BLINK_SLOW 500   // 慢速闪烁间隔（ms）- 芯片未连接
+
 #ifndef TEST_MODE_DIRECT
 RF24 radio(9, 10);
 const byte address[6] = "00001";
@@ -142,11 +147,26 @@ void sendHIDKey(uint8_t physKey, uint8_t state) {
   }
 }
 
+// LED 闪烁函数 - 进入无限闪烁循环表示错误
+void errorBlink(int interval) {
+  pinMode(LED_PIN, OUTPUT);
+  while (1) {
+    digitalWrite(LED_PIN, HIGH);
+    delay(interval);
+    digitalWrite(LED_PIN, LOW);
+    delay(interval);
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   // while (!Serial);  // 禁用等待串口，让 Arduino 独立运行
   // Serial.println("BOOT OK");  // 禁用启动输出，避免干扰 controller
  
+  // 初始化 LED
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);  // 初始关闭
+  
   // 初始化 HID 键盘（延后一点）
   delay(500);
 
@@ -168,8 +188,24 @@ void setup() {
   // Serial.println(TEST_BUTTON_PIN);
   #else
   // 无线模式: 初始化 nRF24
-  radio.begin();
+  if (!radio.begin()) {
+    // nRF24 初始化失败 - LED 快速闪烁
+    errorBlink(LED_BLINK_FAST);
+  }
+  
+  // 检查 nRF24 芯片是否连接正常
+  if (!radio.isChipConnected()) {
+    // nRF24 芯片未连接 - LED 慢速闪烁
+    errorBlink(LED_BLINK_SLOW);
+  }
+  
+  // 初始化成功，LED 常亮 1 秒后关闭
+  digitalWrite(LED_PIN, HIGH);
+  delay(1000);
+  digitalWrite(LED_PIN, LOW);
+  
   radio.openReadingPipe(0, address);
+  radio.setPALevel(RF24_PA_LOW);  // 设置发射功率
   radio.startListening();
   // Serial.println("[RF MODE] 无线模式已启用");
   #endif
