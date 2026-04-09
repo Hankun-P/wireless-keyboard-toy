@@ -5,8 +5,8 @@
 #include <Keyboard.h>
 
 // ========== 测试模式配置 ==========
-#define TEST_MODE_DIRECT  // 定义此宏启用直连测试模式，注释掉则使用无线模式
-#define TEST_BUTTON_PIN 4 // 测试按键引脚 (根据你的接线修改)
+//#define TEST_MODE_DIRECT  // 定义此宏启用直连测试模式，注释掉则使用无线模式
+//#define TEST_BUTTON_PIN 4 // 测试按键引脚 (根据你的接线修改)
 
 #ifndef TEST_MODE_DIRECT
 RF24 radio(9, 10);

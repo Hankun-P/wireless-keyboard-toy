@@ -1,8 +1,8 @@
 import sys
 import os
-from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QComboBox, QMessageBox
-from PySide6.QtCore import QTimer, Qt, QPoint, QDateTime
-from PySide6.QtGui import QPixmap, QKeySequence, QPainter, QFontDatabase, QFont
+from PySide6.QtWidgets import QWidget, QLabel, QApplication
+from PySide6.QtCore import QTimer, Qt, QPoint
+from PySide6.QtGui import QPixmap, QPainter, QFontDatabase, QFont
 
 from core.device import ArduinoDevice
 from core.state import UIState
@@ -12,36 +12,45 @@ from utils.path import resource_path
 
 
 class App(QWidget):
-    # 窗口尺寸（根据背景图调整）
+    # ========== 窗口配置 ==========
     WINDOW_WIDTH = 800
     WINDOW_HEIGHT = 600
     
-    # 资源路径配置（后期替换为实际资源）
-    BG_IMAGE = "assets/bg.png"                    # 背景图
-    FONT_FILE = "assets/font.ttf"                 # 自定义字体
-    BTN_BIND_NORMAL = "assets/btn_bind_normal.png"    # 绑定按钮-正常
-    BTN_BIND_HOVER = "assets/btn_bind_hover.png"      # 绑定按钮-悬停
-    BTN_BIND_PRESSED = "assets/btn_bind_pressed.png"  # 绑定按钮-按下
+    # ========== 布局配置 ==========
+    MARGIN = 80                     # 界面边距
+    PRAY_TEXT_SPACING = 16          # 祈祷文字间距
+    PRAY_JUMP_HEIGHT = 5            # 跳跃高度（像素）
+    PRAY_ANIM_INTERVAL = 200        # 祈祷动画间隔（ms）
+    STATUS_ANIM_INTERVAL = 500      # 状态图标动画间隔（ms）
+    AUTO_CONNECT_INTERVAL = 2000    # 自动连接尝试间隔（ms）
     
-    # 关闭按钮图片
-    BTN_CLOSE_NORMAL = "assets/btn_close_normal.png"    # 关闭按钮-正常
-    BTN_CLOSE_HOVER = "assets/btn_close_hover.png"      # 关闭按钮-悬停
-    BTN_CLOSE_PRESSED = "assets/btn_close_pressed.png"  # 关闭按钮-按下
+    # ========== 资源路径配置 ==========
+    BG_IMAGE = "assets/bg.png"
+    FONT_FILE = "assets/font.ttf"
     
-    # 连接状态指示图
-    STATUS_CONNECTING = [                      # 连接中 - 两帧动画
+    # 按钮图片
+    BTN_BIND_NORMAL = "assets/btn_bind_normal.png"
+    BTN_BIND_HOVER = "assets/btn_bind_hover.png"
+    BTN_BIND_PRESSED = "assets/btn_bind_pressed.png"
+    
+    BTN_CLOSE_NORMAL = "assets/btn_close_normal.png"
+    BTN_CLOSE_HOVER = "assets/btn_close_hover.png"
+    BTN_CLOSE_PRESSED = "assets/btn_close_pressed.png"
+    
+    # 状态指示图
+    STATUS_CONNECTING = [
         "assets/status_connecting_1.png",
         "assets/status_connecting_2.png"
     ]
-    STATUS_CONNECTED = "assets/status_connected.png"    # 已连接
-    STATUS_DISCONNECTED = "assets/status_disconnected.png"  # 无设备/断开
+    STATUS_CONNECTED = "assets/status_connected.png"
+    STATUS_DISCONNECTED = "assets/status_disconnected.png"
     
-    # 电量状态图片（四档）
+    # 电量图片
     BATTERY_IMAGES = {
-        0: "assets/battery_0.png",      # 0-25%
-        1: "assets/battery_1.png",      # 26-50%
-        2: "assets/battery_2.png",      # 51-75%
-        3: "assets/battery_3.png",      # 76-100%
+        0: "assets/battery_0.png",
+        1: "assets/battery_1.png",
+        2: "assets/battery_2.png",
+        3: "assets/battery_3.png",
     }
     
     def __init__(self):
@@ -54,6 +63,9 @@ class App(QWidget):
         
         # 设置无边框窗口
         self.setWindowFlags(Qt.FramelessWindowHint)
+        
+        # 窗口居中显示
+        self._center_window()
         
         # 用于窗口拖动的变量
         self._drag_pos = None
@@ -80,7 +92,7 @@ class App(QWidget):
         margin = 80  # 边距 - 增大以靠近中央
         
         # 左上角：电量显示
-        self.battery_label = QLabel("当前以太量", self)
+        self.battery_label = QLabel("剩余以太量", self)
         self.battery_label.move(margin, margin)
         self.apply_font(self.battery_label, 10)
         
@@ -140,27 +152,18 @@ class App(QWidget):
         # 加载状态图片
         self._load_status_images()
         
-        # 连接动画定时器
-        self.status_anim_timer = QTimer(self)
-        self.status_anim_timer.timeout.connect(self._update_connecting_anim)
-        self.status_anim_frame = 0
+        # 初始化定时器管理器
+        self._init_timers()
         
-        # 文字跳跃动画定时器 (180ms × 5字 + 300ms停留 = 1200ms 一轮)
-        self.pray_anim_timer = QTimer(self)
-        self.pray_anim_timer.timeout.connect(self._update_praying_anim)
-        self.pray_char_index = 0  # 当前跳跃的字索引
-        self.pray_dots_count = 1  # 当前省略号数量
-        self.pray_cycle_count = 0  # 已完成轮数（用于虚假显示）
-        self.min_pray_time_ms = 2000  # 最少显示时间（毫秒）- 约1轮
-        self.pray_start_time = 0  # 动画开始时间
-        self.pending_connected = False  # 待切换到已连接状态
-        self.pray_anim_interval = 360  # 正常帧间隔(ms) - 翻倍
-        self.pray_last_frame_interval = 600  # 最后一帧停留时间(ms) - 翻倍
-        
-        # 自动连接定时器
-        self.auto_connect_timer = QTimer(self)
-        self.auto_connect_timer.timeout.connect(self.try_auto_connect)
-        self.auto_connect_timer.start(2000)
+        # 祈祷动画状态
+        self.pray_char_index = 0
+        self.pray_dots_count = 1
+        self.pray_cycle_count = 0
+        self.min_pray_time_ms = 2000
+        self.pray_start_time = 0
+        self.pending_connected = False
+        self.pray_anim_interval = 360
+        self.pray_last_frame_interval = 600
         
         # 初始尝试连接
         self._set_status_connecting()
@@ -226,13 +229,6 @@ class App(QWidget):
         self.frame_index = 0
         self.progress_value = 0
         self.current_pressed_key = None
-
-        # ===== 定时器 =====
-        self.anim_timer = QTimer()
-        self.anim_timer.timeout.connect(self.update_animation)
-
-        self.progress_timer = QTimer()
-        self.progress_timer.timeout.connect(self.update_progress)
 
         self.refresh()
 
@@ -396,6 +392,40 @@ class App(QWidget):
         else:
             self.status_icon.clear()
 
+    def _center_window(self):
+        """将窗口居中显示在屏幕上"""
+        screen = QApplication.primaryScreen().geometry()
+        size = self.geometry()
+        x = (screen.width() - size.width()) // 2
+        y = (screen.height() - size.height()) // 2
+        self.move(x, y)
+
+    def _init_timers(self):
+        """初始化所有定时器"""
+        # 状态图标动画定时器
+        self.status_anim_timer = QTimer(self)
+        self.status_anim_timer.timeout.connect(self._update_connecting_anim)
+        self.status_anim_frame = 0
+        
+        # 祈祷文字动画定时器
+        self.pray_anim_timer = QTimer(self)
+        self.pray_anim_timer.timeout.connect(self._update_praying_anim)
+        
+        # 自动连接定时器
+        self.auto_connect_timer = QTimer(self)
+        self.auto_connect_timer.timeout.connect(self.try_auto_connect)
+        self.auto_connect_timer.start(self.AUTO_CONNECT_INTERVAL)
+        
+        # 动画定时器
+    def _stop_all_timers(self):
+        """停止所有动画定时器（保留自动连接）"""
+        self.status_anim_timer.stop()
+        self.pray_anim_timer.stop()
+        self.anim_timer.stop()
+        self.progress_timer.stop()
+        if hasattr(self, 'dis_timer'):
+            self.dis_timer.stop()
+
     def load_custom_font(self):
         """加载自定义字体"""
         font_path = resource_path(self.FONT_FILE)
@@ -539,11 +569,8 @@ class App(QWidget):
     
     def cancel_binding(self):
         """取消绑定，返回初始界面"""
-        # 停止所有定时器
-        self.progress_timer.stop()
-        self.anim_timer.stop()
-        if hasattr(self, 'dis_timer'):
-            self.dis_timer.stop()
+        # 停止所有动画定时器
+        self._stop_all_timers()
         
         # 重置状态
         self.progress_value = 0
@@ -662,6 +689,12 @@ class App(QWidget):
 
     # ================= 刷新 =================
     def refresh(self):
-        data = self.device.get_status()
-        self._update_battery_display(data['battery'])
-        self.key.setText(f"当前按键：{data['key']}")
+        # 只有连接成功后才更新显示
+        if self.device.serial and self.device.serial.is_open:
+            data = self.device.get_status()
+            self._update_battery_display(data['battery'])
+            self.key.setText(data['key'])
+        else:
+            # 未连接时显示为空
+            self.battery_icon.clear()
+            self.key.setText("--")

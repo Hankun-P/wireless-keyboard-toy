@@ -154,15 +154,26 @@ class ArduinoDevice:
             return None
     
     def _read_current_keymap(self):
-        """读取当前按键映射"""
+        """读取当前按键映射和电量"""
         response = self._send_command("GET")
         if response and response.startswith("MAP:0->0x"):
             try:
-                hid_hex = response.split("0x")[1]
+                # 解析格式: "MAP:0->0x68,BAT:3"
+                # 提取 HID 码
+                hid_part = response.split(",")[0]
+                hid_hex = hid_part.split("0x")[1]
                 self.hid_code = int(hid_hex, 16)
                 self.key = hid_to_key_name(self.hid_code)
-            except:
-                pass
+                
+                # 提取电量档位 (0-3)
+                if ",BAT:" in response:
+                    bat_part = response.split(",BAT:")[1]
+                    battery_level = int(bat_part)
+                    # 转换为百分比显示
+                    battery_map = {0: 12, 1: 37, 2: 62, 3: 87}  # 取每档中间值
+                    self.battery = battery_map.get(battery_level, 87)
+            except Exception as e:
+                print(f"[DEBUG] 解析响应失败: {e}, 响应: {response}")
     
     def set_key(self, qt_key):
         """设置按键映射 (传入 Qt Key)"""
@@ -189,7 +200,9 @@ class ArduinoDevice:
             return False
     
     def get_status(self):
-        """获取设备状态"""
+        """获取设备状态（电量来自 output 端通过无线传输）"""
+        # 每次获取状态时刷新电量（从串口读取最新）
+        self._read_current_keymap()
         return {"battery": self.battery, "key": self.key}
     
     @staticmethod

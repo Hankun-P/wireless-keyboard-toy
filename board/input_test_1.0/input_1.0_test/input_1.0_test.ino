@@ -18,11 +18,12 @@ RF24 radio(9, 10);
 const byte address[6] = "00001";
 #endif
 
-// 数据包结构
+// 数据包结构（与 output 端保持一致）
 struct Packet {
   uint8_t keycode;   // 物理按键编号
   uint8_t state;     // 0=释放, 1=按下
   uint16_t seq;
+  uint8_t battery;   // 电量档位 0-3
 };
 
 Packet p;
@@ -91,8 +92,12 @@ void processSerialCommand() {
           }
         }
       } else if (cmdBuffer == "GET") {
+        // 返回按键映射和电量
+        // 格式: "MAP:0->0x68,BAT:3\n"
         Serial.print("MAP:0->0x");
-        Serial.println(keymap[0], HEX);
+        Serial.print(keymap[0], HEX);
+        Serial.print(",BAT:");
+        Serial.println(currentBatteryLevel);
       }
       
       cmdBuffer = "";
@@ -124,27 +129,34 @@ uint8_t hidToAscii(uint8_t hidKey) {
   return hidKey;
 }
 
-// 发送 HID 按键事件
-void sendHIDKey(uint8_t physKey, uint8_t state) {
+// 当前接收到的电量（四档 0-3）
+volatile uint8_t currentBatteryLevel = 0;
+
+// 发送 HID 按键事件，同时上报电量
+void sendHIDKey(uint8_t physKey, uint8_t state, uint8_t battery) {
   uint8_t hidKey = keymap[physKey];
   
+  // 更新电量记录
+  currentBatteryLevel = battery;
+  
   if (state == 1) {
-    // 使用 Keyboard.write 发送 ASCII 字符（绕过输入法）
     uint8_t ascii = hidToAscii(hidKey);
     if (ascii >= 32 && ascii <= 126) {
-      // 可打印字符
       Keyboard.write(ascii);
     } else {
-      // 控制字符或功能键，使用原来的方式
       Keyboard.press(hidKey);
       Keyboard.release(hidKey);
     }
-    // 调试输出已禁用，避免干扰 controller
-    // Serial.print("SEND:");
-    // Serial.print(hidKey, HEX);
-    // Serial.print("->");
-    // Serial.println((char)ascii);
   }
+  
+  // 通过串口上报按键事件和电量（供 controller 读取）
+  // 格式: "EVENT:keycode,state,battery\n"
+  Serial.print("EVENT:");
+  Serial.print(physKey);
+  Serial.print(",");
+  Serial.print(state);
+  Serial.print(",");
+  Serial.println(battery);
 }
 
 // LED 闪烁函数 - 进入无限闪烁循环表示错误
@@ -224,8 +236,8 @@ void loop() {
     p.state = (currentState == LOW) ? 1 : 0;  // LOW=按下, HIGH=释放
     p.seq = testSeq++;
     
-    // 发送 HID 按键事件
-    sendHIDKey(p.keycode, p.state);
+    // 发送 HID 按键事件（直连测试模式电量固定为 3，即 75-100%）
+    sendHIDKey(p.keycode, p.state, 3);
     
     delay(10);  // 简单消抖
   }
@@ -237,8 +249,8 @@ void loop() {
   if (radio.available()) {
     radio.read(&p, sizeof(p));
     
-    // 发送 HID 按键事件给 PC
-    sendHIDKey(p.keycode, p.state);
+    // 发送 HID 按键事件给 PC，同时上报电量
+    sendHIDKey(p.keycode, p.state, p.battery);
   }
   #endif
 }

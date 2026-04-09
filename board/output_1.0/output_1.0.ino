@@ -9,17 +9,26 @@
 #define LED_BLINK_FAST 100   // 快速闪烁 - 初始化失败
 #define LED_BLINK_SLOW 500   // 慢速闪烁 - 芯片未连接
 
+// 电池电量检测配置
+#define BATTERY_PIN A0      // 电池电压检测引脚
+// 3.7V 锂电池电压范围：3.3V(0%) ~ 4.2V(100%)
+// 通过分压电阻后接 A0，需要根据实际电路调整这些值
+#define BATTERY_MIN_RAW 600   // 3.3V 对应的 ADC 值（需校准）
+#define BATTERY_MAX_RAW 770   // 4.2V 对应的 ADC 值（需校准）
+#define BATTERY_SEND_INTERVAL 120000  // 每 120 秒（2分钟）发送一次电量（减少耗电）
+
 RF24 radio(9, 10);
 const byte address[6] = "00001";
 
 bool lastState = HIGH;
 unsigned long seq = 0;
 
-// 数据包结构
+// 数据包结构（与 input 端保持一致）
 struct Packet {
   uint8_t keycode;   // 物理按键编号 (固定为0)
   uint8_t state;     // 0=释放, 1=按下
   uint16_t seq;
+  uint8_t battery;   // 电量百分比 0-100
 };
 
 // 发送失败重试次数
@@ -38,6 +47,9 @@ void errorBlink(int interval) {
 
 void setup() {
   pinMode(BUTTON_PIN, INPUT_PULLUP);
+  
+  // 初始化电池检测
+  pinMode(BATTERY_PIN, INPUT);
   
   // 初始化 LED
   pinMode(LED_PIN, OUTPUT);
@@ -66,27 +78,68 @@ void setup() {
   radio.stopListening();
 }
 
+// 读取电池电量（四档：0, 1, 2, 3 对应 0-25, 25-50, 50-75, 75-100）
+uint8_t readBatteryLevel() {
+  int raw = analogRead(BATTERY_PIN);
+  
+  // 将 ADC 值映射到 0-100
+  int percent = map(raw, BATTERY_MIN_RAW, BATTERY_MAX_RAW, 0, 100);
+  percent = constrain(percent, 0, 100);
+  
+  // 转换为四档
+  if (percent >= 75) return 3;
+  if (percent >= 50) return 2;
+  if (percent >= 25) return 1;
+  return 0;
+}
+
+// 上次发送电量的时间
+unsigned long lastBatterySend = 0;
+// 上次的电量值（用于检测变化）
+uint8_t lastBatteryLevel = 255;
+
 void loop() {
   bool currentState = digitalRead(BUTTON_PIN);
+  unsigned long now = millis();
 
+  // 检查是否需要发送数据（按键变化或定时发送电量）
+  bool shouldSend = false;
+  
+  // 按键状态变化
   if (currentState != lastState) {
+    shouldSend = true;
+  }
+  
+  // 定时发送电量（每 5 秒）
+  uint8_t currentBattery = readBatteryLevel();
+  if (now - lastBatterySend > BATTERY_SEND_INTERVAL) {
+    shouldSend = true;
+  }
+  // 电量变化时立即发送
+  if (currentBattery != lastBatteryLevel) {
+    shouldSend = true;
+  }
+  
+  if (shouldSend) {
     Packet p;
-    p.keycode = 0;      // 物理按键编号固定为0
-    p.state = (currentState == LOW) ? 1 : 0;  // LOW=按下(1), HIGH=释放(0)
+    p.keycode = 0;
+    p.state = (currentState == LOW) ? 1 : 0;
     p.seq = seq++;
+    p.battery = currentBattery;  // 0-3 四档电量
 
     // 发送数据，带重试机制
     bool sent = false;
     for (int i = 0; i < MAX_RETRY; i++) {
       if (radio.write(&p, sizeof(p))) {
         sent = true;
-        break;  // 发送成功，跳出重试
+        break;
       }
-      delay(5);  // 短暂延迟后重试
+      delay(5);
     }
     
-    // 如果所有重试都失败，可以选择在这里处理错误
-    // 例如：记录错误次数、LED 指示等
+    // 更新发送记录
+    lastBatterySend = now;
+    lastBatteryLevel = currentBattery;
 
     delay(10);  // 简单消抖
   }
