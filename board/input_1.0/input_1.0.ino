@@ -17,10 +17,12 @@ const byte address[6] = "00001";
 #endif
 
 // 数据包结构（与 output 端保持一致）
+// 全部使用 uint8_t 避免对齐问题，seq 拆分为高字节和低字节
 struct Packet {
   uint8_t keycode;   // 物理按键编号
   uint8_t state;     // 0=释放, 1=按下
-  uint16_t seq;
+  uint8_t seq_low;   // 序列号低字节
+  uint8_t seq_high;  // 序列号高字节
   uint8_t battery;   // 电量档位 0-3
 };
 
@@ -44,11 +46,14 @@ uint8_t keymap[1];
 
 // 加载 EEPROM 中的映射表
 void loadKeymap() {
-  // 强制使用默认值（调试时启用，避免EEPROM残留）
-  keymap[0] = DEFAULT_KEYMAP[0];
-  saveKeymap();
-  Serial.print("KEYMAP_SET: 0x");
-  Serial.println(keymap[0], HEX);
+  // 检查是否已初始化 (第一个字节为 0xFF 表示未初始化)
+  if (EEPROM.read(EEPROM_ADDR_KEYMAP) == 0xFF) {
+    // 使用默认值并保存
+    keymap[0] = DEFAULT_KEYMAP[0];
+    saveKeymap();
+  } else {
+    keymap[0] = EEPROM.read(EEPROM_ADDR_KEYMAP);
+  }
 }
 
 // 保存映射表到 EEPROM
@@ -124,13 +129,6 @@ uint8_t hidToAscii(uint8_t hidKey) {
 void sendHIDKey(uint8_t physKey, uint8_t state) {
   uint8_t hidKey = keymap[physKey];
   
-  Serial.print("SEND_HID: phys=");
-  Serial.print(physKey);
-  Serial.print(" hid=");
-  Serial.print(hidKey, HEX);
-  Serial.print(" state=");
-  Serial.println(state);
-  
   if (state == 1) {
     // 使用 Keyboard.write 发送 ASCII 字符（绕过输入法）
     uint8_t ascii = hidToAscii(hidKey);
@@ -189,6 +187,8 @@ void setup() {
     }
   }
   Serial.println("RF24_OK");
+  Serial.print("[INIT] Packet size=");
+  Serial.println(sizeof(Packet));
   radio.setPALevel(RF24_PA_HIGH);  // 提高功率
   radio.setDataRate(RF24_250KBPS);  // 降低速率增加稳定性
   radio.setChannel(76);  // 固定信道
@@ -202,6 +202,16 @@ void loop() {
   // 处理串口指令 (改键)
   processSerialCommand();
   
+  // 调试：周期性输出心跳（每5秒）
+  static unsigned long lastHeartbeat = 0;
+  if (millis() - lastHeartbeat > 5000) {
+    lastHeartbeat = millis();
+    Serial.print("[HB] radio.available()=");
+    Serial.print(radio.available());
+    Serial.print(", isChipConnected=");
+    Serial.println(radio.isChipConnected());
+  }
+  
   #ifdef TEST_MODE_DIRECT
   // 测试模式: 直接读取按键
   bool currentState = digitalRead(TEST_BUTTON_PIN);
@@ -209,7 +219,9 @@ void loop() {
   if (currentState != lastButtonState) {
     p.keycode = 0;  // 物理按键编号
     p.state = (currentState == LOW) ? 1 : 0;  // LOW=按下, HIGH=释放
-    p.seq = testSeq++;
+    p.seq_low = testSeq & 0xFF;
+    p.seq_high = (testSeq >> 8) & 0xFF;
+    testSeq++;
     
     // 发送 HID 按键事件
     sendHIDKey(p.keycode, p.state);
@@ -221,16 +233,28 @@ void loop() {
   
   #else
   // 无线模式: 处理无线按键事件
-  if (radio.available()) {
+  uint8_t pipeNum;
+  if (radio.available(&pipeNum)) {
+    uint8_t payloadSize = radio.getPayloadSize();
+    Serial.print("[RX] pipe=");
+    Serial.print(pipeNum);
+    Serial.print(", payloadSize=");
+    Serial.print(payloadSize);
+    Serial.print(", sizeof(Packet)=");
+    Serial.println(sizeof(Packet));
+    
     radio.read(&p, sizeof(p));
     
     // 调试输出（临时启用）
-    Serial.print("RX:");
+    uint16_t fullSeq = p.seq_low | (p.seq_high << 8);
+    Serial.print("RX_DATA:");
     Serial.print(p.keycode);
     Serial.print(",");
     Serial.print(p.state);
     Serial.print(",");
-    Serial.println(p.seq);
+    Serial.print(fullSeq);
+    Serial.print(",");
+    Serial.println(p.battery);
     
     // 发送 HID 按键事件给 PC
     Serial.print("HID_SEND:");

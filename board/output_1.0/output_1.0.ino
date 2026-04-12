@@ -25,10 +25,12 @@ bool initialized = false;  // 初始化标志
 unsigned long seq = 0;
 
 // 数据包结构（与 input 端保持一致）
+// 全部使用 uint8_t 避免对齐问题，seq 拆分为高字节和低字节
 struct Packet {
   uint8_t keycode;   // 物理按键编号 (固定为0)
   uint8_t state;     // 0=释放, 1=按下
-  uint16_t seq;
+  uint8_t seq_low;   // 序列号低字节
+  uint8_t seq_high;  // 序列号高字节
   uint8_t battery;   // 电量百分比 0-100
 };
 
@@ -72,6 +74,8 @@ void setup() {
   }
   
   Serial.println("RF24_OK");
+  Serial.print("[INIT] Packet size=");
+  Serial.println(sizeof(Packet));
   
   // 初始化成功，LED 闪烁 2 次后关闭
   for (int i = 0; i < 2; i++) {
@@ -89,10 +93,19 @@ void setup() {
   radio.stopListening();
 }
 
-// 读取电池电量（简化：固定返回3，表示满电）
+// 读取电池电量（四档：0, 1, 2, 3 对应 0-25, 25-50, 50-75, 75-100）
 uint8_t readBatteryLevel() {
-  // 暂时禁用 ADC 读取，避免 A0 悬空导致问题
-  return 3;  // 固定返回满电
+  int raw = analogRead(BATTERY_PIN);
+  
+  // 将 ADC 值映射到 0-100
+  int percent = map(raw, BATTERY_MIN_RAW, BATTERY_MAX_RAW, 0, 100);
+  percent = constrain(percent, 0, 100);
+  
+  // 转换为四档
+  if (percent >= 75) return 3;
+  if (percent >= 50) return 2;
+  if (percent >= 25) return 1;
+  return 0;
 }
 
 // 上次发送电量的时间
@@ -101,16 +114,8 @@ unsigned long lastBatterySend = 0;
 uint8_t lastBatteryLevel = 255;
 
 void loop() {
-  static unsigned long lastDebug = 0;
-  unsigned long now = millis();
-  
-  // 每秒输出一次心跳，确认程序还在运行
-  if (now - lastDebug > 1000) {
-    Serial.print(".");
-    lastDebug = now;
-  }
-  
   bool currentState = digitalRead(BUTTON_PIN);
+  unsigned long now = millis();
   uint8_t currentBattery = readBatteryLevel();
 
   // 首次运行时初始化状态，避免误触发
@@ -137,7 +142,9 @@ void loop() {
     Packet p;
     p.keycode = 0;
     p.state = (currentState == LOW) ? 1 : 0;  // LOW=按下(1), HIGH=释放(0)
-    p.seq = seq++;
+    uint16_t currentSeq = seq++;
+    p.seq_low = currentSeq & 0xFF;
+    p.seq_high = (currentSeq >> 8) & 0xFF;
     p.battery = currentBattery;  // 0-3 四档电量
 
     // 调试输出
@@ -145,21 +152,22 @@ void loop() {
     Serial.print(p.state);
     Serial.print(",BAT:");
     Serial.print(p.battery);
+    uint16_t fullSeq = p.seq_low | (p.seq_high << 8);
     Serial.print(",SEQ:");
-    Serial.println(p.seq);
+    Serial.println(fullSeq);
 
     // 发送数据，带重试机制
     bool sent = false;
-    Serial.print("WRITE_START ");
+    Serial.print("[TX] Sending size=");
+    Serial.println(sizeof(p));
     for (int i = 0; i < MAX_RETRY; i++) {
-      Serial.print(i);
       if (radio.write(&p, sizeof(p))) {
         sent = true;
         break;
       }
       delay(5);
     }
-    Serial.print(" ");
+    
     Serial.println(sent ? "SEND_OK" : "SEND_FAIL");
     
     // 更新发送记录
