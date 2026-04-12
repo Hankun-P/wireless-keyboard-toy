@@ -1,7 +1,7 @@
 import sys
 import os
 from PySide6.QtWidgets import QWidget, QLabel, QApplication
-from PySide6.QtCore import QTimer, Qt, QPoint
+from PySide6.QtCore import QTimer, Qt, QPoint, QDateTime
 from PySide6.QtGui import QPixmap, QPainter, QFontDatabase, QFont
 
 from core.device import ArduinoDevice
@@ -416,12 +416,14 @@ class App(QWidget):
         self.auto_connect_timer.timeout.connect(self.try_auto_connect)
         self.auto_connect_timer.start(self.AUTO_CONNECT_INTERVAL)
         
-        # 动画定时器
+        # 进度条定时器
+        self.progress_timer = QTimer(self)
+        self.progress_timer.timeout.connect(self.update_progress)
+        
     def _stop_all_timers(self):
         """停止所有动画定时器（保留自动连接）"""
         self.status_anim_timer.stop()
         self.pray_anim_timer.stop()
-        self.anim_timer.stop()
         self.progress_timer.stop()
         if hasattr(self, 'dis_timer'):
             self.dis_timer.stop()
@@ -613,7 +615,7 @@ class App(QWidget):
 
         self.progress_value = 0
         self.progress_timer.start(30)
-        self.anim_timer.start(150)
+        self.pray_anim_timer.start(150)
 
     def keyReleaseEvent(self, event):
         if self.state != UIState.BINDING:
@@ -622,7 +624,7 @@ class App(QWidget):
             return
 
         self.progress_timer.stop()
-        self.anim_timer.stop()
+        self.pray_anim_timer.stop()
 
         if self.progress_value >= 100:
             self.play_success()
@@ -650,7 +652,7 @@ class App(QWidget):
 
         if self.progress_value >= 100:
             self.progress_timer.stop()
-            self.anim_timer.stop()
+            self.pray_anim_timer.stop()
             self.play_success()
 
     # ================= 成功动画 =================

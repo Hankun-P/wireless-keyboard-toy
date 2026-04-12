@@ -8,16 +8,20 @@
 //#define TEST_MODE_DIRECT  // 定义此宏启用直连测试模式，注释掉则使用无线模式
 //#define TEST_BUTTON_PIN 4 // 测试按键引脚 (根据你的接线修改)
 
+// LED 引脚定义（Pro Micro 板载 LED 通常在 D17/TXLED 或 D30/RXLED）
+#define LED_PIN 17  // Pro Micro TX LED
+
 #ifndef TEST_MODE_DIRECT
 RF24 radio(9, 10);
 const byte address[6] = "00001";
 #endif
 
-// 数据包结构
+// 数据包结构（与 output 端保持一致）
 struct Packet {
   uint8_t keycode;   // 物理按键编号
   uint8_t state;     // 0=释放, 1=按下
   uint16_t seq;
+  uint8_t battery;   // 电量档位 0-3
 };
 
 Packet p;
@@ -31,23 +35,20 @@ unsigned long testSeq = 0;
 // EEPROM 地址定义
 const int EEPROM_ADDR_KEYMAP = 0;  // 按键映射表起始地址
 
-// 默认映射: 物理按键0 -> F13 (0x68)
+// 默认映射: 物理按键0 -> 'a' (0x04)
 // HID 键码参考: https://www.usb.org/sites/default/files/documents/hut1_12v2.pdf
-const uint8_t DEFAULT_KEYMAP[] = {0x68};
+const uint8_t DEFAULT_KEYMAP[] = {0x04};
 
 // 当前按键映射表 (物理按键 -> HID 键码)
 uint8_t keymap[1];
 
 // 加载 EEPROM 中的映射表
 void loadKeymap() {
-  // 检查是否已初始化 (第一个字节为 0xFF 表示未初始化)
-  if (EEPROM.read(EEPROM_ADDR_KEYMAP) == 0xFF) {
-    // 使用默认值并保存
-    keymap[0] = DEFAULT_KEYMAP[0];
-    saveKeymap();
-  } else {
-    keymap[0] = EEPROM.read(EEPROM_ADDR_KEYMAP);
-  }
+  // 强制使用默认值（调试时启用，避免EEPROM残留）
+  keymap[0] = DEFAULT_KEYMAP[0];
+  saveKeymap();
+  Serial.print("KEYMAP_SET: 0x");
+  Serial.println(keymap[0], HEX);
 }
 
 // 保存映射表到 EEPROM
@@ -123,6 +124,13 @@ uint8_t hidToAscii(uint8_t hidKey) {
 void sendHIDKey(uint8_t physKey, uint8_t state) {
   uint8_t hidKey = keymap[physKey];
   
+  Serial.print("SEND_HID: phys=");
+  Serial.print(physKey);
+  Serial.print(" hid=");
+  Serial.print(hidKey, HEX);
+  Serial.print(" state=");
+  Serial.println(state);
+  
   if (state == 1) {
     // 使用 Keyboard.write 发送 ASCII 字符（绕过输入法）
     uint8_t ascii = hidToAscii(hidKey);
@@ -144,6 +152,7 @@ void sendHIDKey(uint8_t physKey, uint8_t state) {
 
 void setup() {
   Serial.begin(115200);
+  delay(1000);  // 等待串口就绪
   // while (!Serial);  // 禁用等待串口，让 Arduino 独立运行
   // Serial.println("BOOT OK");  // 禁用启动输出，避免干扰 controller
  
@@ -168,10 +177,24 @@ void setup() {
   // Serial.println(TEST_BUTTON_PIN);
   #else
   // 无线模式: 初始化 nRF24
-  radio.begin();
+  if (!radio.begin()) {
+    Serial.println("RF24_INIT_FAILED");
+    // LED 快速闪烁表示错误
+    pinMode(LED_PIN, OUTPUT);
+    while (1) {
+      digitalWrite(LED_PIN, HIGH);
+      delay(100);
+      digitalWrite(LED_PIN, LOW);
+      delay(100);
+    }
+  }
+  Serial.println("RF24_OK");
+  radio.setPALevel(RF24_PA_HIGH);  // 提高功率
+  radio.setDataRate(RF24_250KBPS);  // 降低速率增加稳定性
+  radio.setChannel(76);  // 固定信道
+  radio.setAutoAck(false);  // 禁用自动应答
   radio.openReadingPipe(0, address);
   radio.startListening();
-  // Serial.println("[RF MODE] 无线模式已启用");
   #endif
 }
 
@@ -201,7 +224,19 @@ void loop() {
   if (radio.available()) {
     radio.read(&p, sizeof(p));
     
+    // 调试输出（临时启用）
+    Serial.print("RX:");
+    Serial.print(p.keycode);
+    Serial.print(",");
+    Serial.print(p.state);
+    Serial.print(",");
+    Serial.println(p.seq);
+    
     // 发送 HID 按键事件给 PC
+    Serial.print("HID_SEND:");
+    Serial.print(p.keycode);
+    Serial.print(",");
+    Serial.println(p.state);
     sendHIDKey(p.keycode, p.state);
   }
   #endif
