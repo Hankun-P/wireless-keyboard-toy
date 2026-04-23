@@ -17,7 +17,7 @@
 #define BATTERY_MAX_RAW 770   // 4.2V 对应的 ADC 值（需校准）
 #define BATTERY_SEND_INTERVAL 120000  // 每 120 秒（2分钟）发送一次电量（减少耗电）
 
-RF24 radio(9, 10);
+RF24 radio(7, 9);  // CE=D7, CSN=D9
 const byte address[6] = "00001";
 
 bool lastState = HIGH;
@@ -63,19 +63,13 @@ void setup() {
 
   // nRF24 初始化检查
   if (!radio.begin()) {
-    Serial.println("RF24_INIT_FAILED");
     errorBlink(LED_BLINK_FAST);  // 快速闪烁
   }
   
   // 检查芯片连接
   if (!radio.isChipConnected()) {
-    Serial.println("RF24_NOT_CONNECTED");
     errorBlink(LED_BLINK_SLOW);  // 慢速闪烁
   }
-  
-  Serial.println("RF24_OK");
-  Serial.print("[INIT] Packet size=");
-  Serial.println(sizeof(Packet));
   
   // 初始化成功，LED 闪烁 2 次后关闭
   for (int i = 0; i < 2; i++) {
@@ -86,10 +80,11 @@ void setup() {
   }
   
   radio.openWritingPipe(address);
-  radio.setPALevel(RF24_PA_HIGH);  // 提高功率
-  radio.setDataRate(RF24_250KBPS);  // 降低速率增加稳定性
-  radio.setChannel(76);  // 固定信道
-  radio.setAutoAck(false);  // 禁用自动应答（不需要ACK）
+  radio.setPALevel(RF24_PA_MAX);  // 最大功率
+  radio.setDataRate(RF24_1MBPS);  // 1Mbps
+  radio.setChannel(100);  // 信道100（与测试程序一致）
+  radio.setAutoAck(true);  // 启用ACK
+  radio.setRetries(15, 15);  // 重试设置
   radio.stopListening();
 }
 
@@ -123,7 +118,6 @@ void loop() {
     lastState = currentState;
     lastBatteryLevel = currentBattery;
     initialized = true;
-    Serial.println("INIT_DONE");
     return;  // 跳过第一次循环
   }
 
@@ -147,28 +141,8 @@ void loop() {
     p.seq_high = (currentSeq >> 8) & 0xFF;
     p.battery = currentBattery;  // 0-3 四档电量
 
-    // 调试输出
-    Serial.print("BTN:");
-    Serial.print(p.state);
-    Serial.print(",BAT:");
-    Serial.print(p.battery);
-    uint16_t fullSeq = p.seq_low | (p.seq_high << 8);
-    Serial.print(",SEQ:");
-    Serial.println(fullSeq);
-
-    // 发送数据，带重试机制
-    bool sent = false;
-    Serial.print("[TX] Sending size=");
-    Serial.println(sizeof(p));
-    for (int i = 0; i < MAX_RETRY; i++) {
-      if (radio.write(&p, sizeof(p))) {
-        sent = true;
-        break;
-      }
-      delay(5);
-    }
-    
-    Serial.println(sent ? "SEND_OK" : "SEND_FAIL");
+    // 发送数据
+    radio.write(&p, sizeof(p));
     
     // 更新发送记录
     lastBatterySend = now;

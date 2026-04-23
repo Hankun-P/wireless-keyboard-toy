@@ -12,7 +12,7 @@
 #define LED_PIN 17  // Pro Micro TX LED
 
 #ifndef TEST_MODE_DIRECT
-RF24 radio(9, 10);
+RF24 radio(7, 9);  // CE=D7, CSN=D9
 const byte address[6] = "00001";
 #endif
 
@@ -176,7 +176,6 @@ void setup() {
   #else
   // 无线模式: 初始化 nRF24
   if (!radio.begin()) {
-    Serial.println("RF24_INIT_FAILED");
     // LED 快速闪烁表示错误
     pinMode(LED_PIN, OUTPUT);
     while (1) {
@@ -186,13 +185,11 @@ void setup() {
       delay(100);
     }
   }
-  Serial.println("RF24_OK");
-  Serial.print("[INIT] Packet size=");
-  Serial.println(sizeof(Packet));
-  radio.setPALevel(RF24_PA_HIGH);  // 提高功率
-  radio.setDataRate(RF24_250KBPS);  // 降低速率增加稳定性
-  radio.setChannel(76);  // 固定信道
-  radio.setAutoAck(false);  // 禁用自动应答
+  radio.setPALevel(RF24_PA_MAX);  // 最大功率
+  radio.setDataRate(RF24_1MBPS);  // 1Mbps
+  radio.setChannel(100);  // 信道100（与测试程序一致）
+  radio.setAutoAck(true);  // 启用ACK
+  radio.setRetries(15, 15);  // 重试设置
   radio.openReadingPipe(0, address);
   radio.startListening();
   #endif
@@ -201,16 +198,6 @@ void setup() {
 void loop() {
   // 处理串口指令 (改键)
   processSerialCommand();
-  
-  // 调试：周期性输出心跳（每5秒）
-  static unsigned long lastHeartbeat = 0;
-  if (millis() - lastHeartbeat > 5000) {
-    lastHeartbeat = millis();
-    Serial.print("[HB] radio.available()=");
-    Serial.print(radio.available());
-    Serial.print(", isChipConnected=");
-    Serial.println(radio.isChipConnected());
-  }
   
   #ifdef TEST_MODE_DIRECT
   // 测试模式: 直接读取按键
@@ -233,34 +220,8 @@ void loop() {
   
   #else
   // 无线模式: 处理无线按键事件
-  uint8_t pipeNum;
-  if (radio.available(&pipeNum)) {
-    uint8_t payloadSize = radio.getPayloadSize();
-    Serial.print("[RX] pipe=");
-    Serial.print(pipeNum);
-    Serial.print(", payloadSize=");
-    Serial.print(payloadSize);
-    Serial.print(", sizeof(Packet)=");
-    Serial.println(sizeof(Packet));
-    
+  if (radio.available()) {
     radio.read(&p, sizeof(p));
-    
-    // 调试输出（临时启用）
-    uint16_t fullSeq = p.seq_low | (p.seq_high << 8);
-    Serial.print("RX_DATA:");
-    Serial.print(p.keycode);
-    Serial.print(",");
-    Serial.print(p.state);
-    Serial.print(",");
-    Serial.print(fullSeq);
-    Serial.print(",");
-    Serial.println(p.battery);
-    
-    // 发送 HID 按键事件给 PC
-    Serial.print("HID_SEND:");
-    Serial.print(p.keycode);
-    Serial.print(",");
-    Serial.println(p.state);
     sendHIDKey(p.keycode, p.state);
   }
   #endif
