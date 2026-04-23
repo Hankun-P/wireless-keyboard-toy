@@ -92,8 +92,12 @@ void processSerialCommand() {
           }
         }
       } else if (cmdBuffer == "GET") {
+        // 返回按键映射和电量
+        // 格式: "MAP:0->0x68,BAT:3\n"
         Serial.print("MAP:0->0x");
-        Serial.println(keymap[0], HEX);
+        Serial.print(keymap[0], HEX);
+        Serial.print(",BAT:");
+        Serial.println(currentBatteryLevel);
       }
       
       cmdBuffer = "";
@@ -125,9 +129,15 @@ uint8_t hidToAscii(uint8_t hidKey) {
   return hidKey;
 }
 
+// 当前接收到的电量（四档 0-3）
+volatile uint8_t currentBatteryLevel = 0;
+
 // 发送 HID 按键事件
-void sendHIDKey(uint8_t physKey, uint8_t state) {
+void sendHIDKey(uint8_t physKey, uint8_t state, uint8_t battery) {
   uint8_t hidKey = keymap[physKey];
+  
+  // 更新电量记录
+  currentBatteryLevel = battery;
   
   if (state == 1) {
     // 使用 Keyboard.write 发送 ASCII 字符（绕过输入法）
@@ -210,8 +220,8 @@ void loop() {
     p.seq_high = (testSeq >> 8) & 0xFF;
     testSeq++;
     
-    // 发送 HID 按键事件
-    sendHIDKey(p.keycode, p.state);
+    // 发送 HID 按键事件（直连测试模式电量固定为 3，即 75-100%）
+    sendHIDKey(p.keycode, p.state, 3);
     
     delay(10);  // 简单消抖
   }
@@ -222,7 +232,7 @@ void loop() {
   // 无线模式: 处理无线按键事件
   if (radio.available()) {
     radio.read(&p, sizeof(p));
-    sendHIDKey(p.keycode, p.state);
+    sendHIDKey(p.keycode, p.state, p.battery);
   }
   #endif
 }

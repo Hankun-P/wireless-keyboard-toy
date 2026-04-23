@@ -17,12 +17,28 @@
 #define BATTERY_MAX_RAW 770   // 4.2V 对应的 ADC 值（需校准）
 #define BATTERY_SEND_INTERVAL 120000  // 每 120 秒（2分钟）发送一次电量（减少耗电）
 
+// LED 连接状态指示
+#define LED_STATUS_PIN 5      // 连接状态 LED 引脚
+
+// 连接状态管理
+#define ACK_SUCCESS_THRESHOLD 1  // 1次成功即认为连接
+#define ACK_FAIL_THRESHOLD 3     // 连续3次失败认为断开
+
+// 省电模式下的发送间隔
+#define BATTERY_SEND_INTERVAL_CONNECTED 120000      // 已连接：2分钟
+#define BATTERY_SEND_INTERVAL_DISCONNECTED 300000   // 未连接：5分钟
+
 RF24 radio(7, 9);  // CE=D7, CSN=D9
 const byte address[6] = "00001";
 
 bool lastState = HIGH;
 bool initialized = false;  // 初始化标志
 unsigned long seq = 0;
+
+// 连接状态管理
+bool isConnected = false;       // 连接状态
+uint8_t ackSuccessCount = 0;    // ACK成功计数
+uint8_t ackFailCount = 0;       // ACK失败计数
 
 // 数据包结构（与 input 端保持一致）
 // 全部使用 uint8_t 避免对齐问题，seq 拆分为高字节和低字节
@@ -60,6 +76,10 @@ void setup() {
   // 初始化 LED
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
+  
+  // 初始化连接状态 LED
+  pinMode(LED_STATUS_PIN, OUTPUT);
+  digitalWrite(LED_STATUS_PIN, LOW);
 
   // nRF24 初始化检查
   if (!radio.begin()) {
@@ -124,11 +144,16 @@ void loop() {
   // 检查是否需要发送数据
   bool shouldSend = false;
   bool isKeyChange = (currentState != lastState);
-  bool isBatteryTime = (now - lastBatterySend > BATTERY_SEND_INTERVAL);
-  bool isBatteryChange = (currentBattery != lastBatteryLevel);
+  unsigned long batteryInterval = isConnected ? BATTERY_SEND_INTERVAL_CONNECTED : BATTERY_SEND_INTERVAL_DISCONNECTED;
+  bool isBatteryTime = (now - lastBatterySend > batteryInterval);
   
-  // 按键状态变化、定时发送电量、电量变化时发送
-  if (isKeyChange || isBatteryTime || isBatteryChange) {
+  // 按键状态变化时发送
+  if (isKeyChange) {
+    shouldSend = true;
+  }
+  
+  // 电量定时上报（只保留定时，未连接时不发送）
+  if (isConnected && isBatteryTime) {
     shouldSend = true;
   }
   
@@ -141,8 +166,25 @@ void loop() {
     p.seq_high = (currentSeq >> 8) & 0xFF;
     p.battery = currentBattery;  // 0-3 四档电量
 
-    // 发送数据
-    radio.write(&p, sizeof(p));
+    // 发送数据并检查ACK
+    bool ack = radio.write(&p, sizeof(p));
+    
+    // 更新连接状态
+    if (ack) {
+      ackSuccessCount++;
+      ackFailCount = 0;
+      if (ackSuccessCount >= ACK_SUCCESS_THRESHOLD) {
+        isConnected = true;
+        digitalWrite(LED_STATUS_PIN, HIGH);
+      }
+    } else {
+      ackFailCount++;
+      ackSuccessCount = 0;
+      if (ackFailCount >= ACK_FAIL_THRESHOLD) {
+        isConnected = false;
+        digitalWrite(LED_STATUS_PIN, LOW);
+      }
+    }
     
     // 更新发送记录
     lastBatterySend = now;
@@ -154,5 +196,10 @@ void loop() {
   // 只在发送后才更新按键状态，确保每次变化都能检测到
   if (shouldSend) {
     lastState = currentState;
+  }
+  
+  // 未连接时降低轮询频率以省电
+  if (!isConnected) {
+    delay(50);
   }
 }
