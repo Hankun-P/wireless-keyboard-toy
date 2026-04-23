@@ -17,8 +17,11 @@
 #define BATTERY_MAX_RAW 770   // 4.2V 对应的 ADC 值（需校准）
 #define BATTERY_SEND_INTERVAL 120000  // 每 120 秒（2分钟）发送一次电量（减少耗电）
 
-// LED 连接状态指示
-#define LED_STATUS_PIN 5      // 连接状态 LED 引脚
+// WS2812B 连接状态指示
+#include <Adafruit_NeoPixel.h>
+#define LED_STATUS_PIN 5      // WS2812B 数据引脚
+#define LED_NUM 1             // WS2812B 灯珠数量
+Adafruit_NeoPixel pixels(LED_NUM, LED_STATUS_PIN, NEO_GRB + NEO_KHZ800);
 
 // 连接状态管理
 #define ACK_SUCCESS_THRESHOLD 1  // 1次成功即认为连接
@@ -77,9 +80,10 @@ void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
   
-  // 初始化连接状态 LED
-  pinMode(LED_STATUS_PIN, OUTPUT);
-  digitalWrite(LED_STATUS_PIN, LOW);
+  // 初始化 WS2812B
+  pixels.begin();
+  pixels.clear();
+  pixels.show();
 
   // nRF24 初始化检查
   if (!radio.begin()) {
@@ -175,14 +179,16 @@ void loop() {
       ackFailCount = 0;
       if (ackSuccessCount >= ACK_SUCCESS_THRESHOLD) {
         isConnected = true;
-        digitalWrite(LED_STATUS_PIN, HIGH);
+        pixels.setPixelColor(0, pixels.Color(0, 255, 0));  // 连接成功：绿色
+        pixels.show();
       }
     } else {
       ackFailCount++;
       ackSuccessCount = 0;
       if (ackFailCount >= ACK_FAIL_THRESHOLD) {
         isConnected = false;
-        digitalWrite(LED_STATUS_PIN, LOW);
+        pixels.clear();  // 断开：熄灭
+        pixels.show();
       }
     }
     
